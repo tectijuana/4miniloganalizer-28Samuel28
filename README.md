@@ -1,167 +1,128 @@
-[![Review Assignment Due Date](https://classroom.github.com/assets/deadline-readme-button-22041afd0340ce965d47ae6ef1cefeee28c7c493a6346c4f15d667ab976d596c.svg)](https://classroom.github.com/a/EbtZGzoI)
-[![Open in Codespaces](https://classroom.github.com/assets/launch-codespace-2972f46106e565e64193e422d61a12cf1da4916b45550586e14ef0a7c637dd04.svg)](https://classroom.github.com/open-in-codespaces?assignment_repo_id=23668580)
-
-# Práctica 1
-
-## Implementación de un Mini Cloud Log Analyzer en ARM64
-
-**Modalidad:** Individual
-**Entorno de trabajo:** AWS Ubuntu ARM64 + GitHub Classroom
-**Lenguaje:** ARM64 Assembly (GNU Assembler) + Bash + GNU Make
+# Práctica 1 — Mini Cloud Log Analyzer
+## Variante C: Detección del primer evento crítico (503)
 
 ---
 
-## Introducción
+## Descripción
 
-Los sistemas modernos de cómputo en la nube generan continuamente registros (*logs*) que permiten monitorear el estado de servicios, detectar fallas y activar alertas ante eventos críticos.
+Este programa lee códigos de estado HTTP desde la entrada estándar (uno por línea) e identifica en qué línea aparece por **primera vez** el código `503`. Si no existe ningún `503` en la entrada, reporta que no fue encontrado.
 
-En esta práctica se desarrollará un módulo simplificado de análisis de logs, implementado en **ARM64 Assembly**, inspirado en tareas reales de monitoreo utilizadas en sistemas cloud, observabilidad y administración de infraestructura.
+---
 
-El programa procesará códigos de estado HTTP suministrados mediante entrada estándar (stdin):
+## Diseño y lógica
 
-```bash id="y1gcmc"
-cat logs.txt | ./analyzer
+### Flujo general
+
+```
+stdin ──► leer byte a byte ──► acumular dígitos por línea
+                                       │
+                              fin de línea ('\n') o EOF
+                                       │
+                              ¿código acumulado == 503?
+                               ├── Sí ──► imprimir línea y salir
+                               └── No ──► incrementar contador, reiniciar acumulador
 ```
 
----
+### Decisiones de diseño
 
-## Objetivo general
+| Aspecto | Decisión |
+|---|---|
+| Lectura | `read` syscall de 1 byte a la vez (sin biblioteca C) |
+| Parsing | Acumulación manual: `acc = acc * 10 + (dígito - '0')` |
+| Contador de líneas | Registro `x19`, se incrementa en cada `'\n'` |
+| Conversión int→ASCII | Función `int_to_str` escrita en ARM64 (división sucesiva entre 10) |
+| Salida | `write` syscall directa a stdout (fd=1) |
 
-Diseñar e implementar, en lenguaje ensamblador ARM64, una solución para procesar registros de eventos y detectar condiciones definidas según la variante asignada.
+### Registros utilizados
 
----
+| Registro | Uso |
+|---|---|
+| `x19` | Número de línea actual (inicia en 1) |
+| `x20` | Acumulador del código HTTP de la línea en curso |
+| `x21` | Flag: 503 encontrado (1) o no (0) |
+| `w22` | Byte leído en cada iteración |
+| `x0–x2` | Parámetros de syscalls (fd, buffer, tamaño) |
+| `x8` | Número de syscall |
 
-## Objetivos específicos
+### Syscalls Linux AArch64 utilizadas
 
-El estudiante aplicará:
-
-* programación en ARM64 bajo Linux
-* manejo de registros
-* direccionamiento y acceso a memoria
-* instrucciones de comparación
-* estructuras iterativas en ensamblador
-* saltos condicionales
-* uso de syscalls Linux
-* compilación con GNU Make
-* control de versiones con GitHub Classroom
-
-Estos temas se alinean con contenidos clásicos de flujo de control, herramientas GNU, manejo de datos y convenciones de programación en ensamblador.   
-
----
-
-## Material proporcionado
-
-Se entregará un repositorio preconfigurado que contiene:
-
-* plantilla base en ARM64
-* archivo `Makefile`
-* script Bash de ejecución
-* archivo de datos (`logs.txt`)
-* pruebas iniciales
-* secciones marcadas con `TODO`
-
-El estudiante deberá completar la lógica correspondiente.
-
----
-
-## Variantes de la práctica
-
-### Variante A
-
-Contabilizar:
-
-* respuestas exitosas (2xx)
-* errores del cliente (4xx)
-* errores del servidor (5xx)
-
----
-
-### Variante B
-
-Determinar el código de estado más frecuente.
-
----
-
-### Variante C
-
-Detectar el primer evento crítico (503).
-
----
-
-### Variante D
-
-Detectar tres errores consecutivos.
-
----
-
-### Variante E
-
-Calcular índice de salud:
-
-```text id="2u4vvx"
-Health Score = 100 - (errores × 10)
-```
+| Número | Nombre | Uso |
+|---|---|---|
+| 63 | `read` | Leer 1 byte desde stdin |
+| 64 | `write` | Escribir mensajes a stdout |
+| 93 | `exit` | Terminar el proceso |
 
 ---
 
 ## Compilación
 
-```bash id="bmubtb"
+```bash
 make
+```
+
+Esto ejecuta internamente:
+```bash
+as -o analyzer.o analyzer.s
+ld -o analyzer analyzer.o
 ```
 
 ---
 
 ## Ejecución
 
-```bash id="gcqlf2"
+```bash
 cat logs.txt | ./analyzer
 ```
 
 ---
 
-## Entregables
+## Pruebas
 
-Cada estudiante deberá entregar en su repositorio:
+```bash
+make test
+```
 
-* archivo fuente ARM64 funcional
-* solución implementada
-* README explicando diseño y lógica utilizada
-* evidencia de ejecución
-* commits realizados en GitHub Classroom
+### Casos de prueba incluidos
 
----
-
-## Criterios de evaluación
-
-| Criterio                    | Ponderación |
-| --------------------------- | ----------- |
-| Compilación correcta        | 20%         |
-| Correctitud de la solución  | 35%         |
-| Uso adecuado de ARM64       | 25%         |
-| Documentación y comentarios | 10%         |
-| Evidencia de pruebas        | 10%         |
+| Test | Entrada | Salida esperada |
+|---|---|---|
+| 1 | `200 404 503 200` | `Primer evento critico 503 encontrado en la linea 3` |
+| 2 | `200 201 404 500` | `No se encontro ningun evento critico 503` |
+| 3 | `503 200` | `Primer evento critico 503 encontrado en la linea 1` |
+| 4 | `200 503 503` | `Primer evento critico 503 encontrado en la linea 2` |
+| 5 | `logs.txt` | `Primer evento critico 503 encontrado en la linea 7` |
 
 ---
 
-## Restricciones
+## Evidencia de ejecución
 
-No está permitido:
+```
+$ make
+as -o analyzer.o analyzer.s
+ld -o analyzer analyzer.o
 
-* resolver la lógica en C
-* resolver la lógica en Python
-* modificar la variante asignada
-* omitir el uso de ARM64 Assembly
+$ cat logs.txt | ./analyzer
+Primer evento critico 503 encontrado en la linea 7
+
+$ make test
+=== Test 1: 503 presente ===
+Primer evento critico 503 encontrado en la linea 3
+=== Test 2: Sin 503 ===
+No se encontro ningun evento critico 503
+=== Test 3: 503 en primera linea ===
+Primer evento critico 503 encontrado en la linea 1
+=== Test 4: Multiples 503 (solo reporta el primero) ===
+Primer evento critico 503 encontrado en la linea 2
+=== Test 5: logs.txt ===
+Primer evento critico 503 encontrado en la linea 7
+```
 
 ---
 
-## Competencia a desarrollar
+## Restricciones cumplidas
 
-Comprender cómo un problema de procesamiento de datos es implementado a nivel máquina mediante instrucciones ARM64.
-
----
-
-## Nota
-
-Aunque este problema puede resolverse fácilmente en lenguajes de alto nivel, el propósito de la práctica es implementar **cómo lo resolvería la arquitectura**, no únicamente obtener el resultado.
-
+- ✅ Lógica implementada **100% en ARM64 Assembly**
+- ✅ Sin uso de C, Python ni bibliotecas externas
+- ✅ Compilación con **GNU Make**
+- ✅ Lee desde **stdin** con `cat logs.txt | ./analyzer`
+- ✅ Sin modificación de la variante asignada (C)
