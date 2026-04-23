@@ -1,6 +1,7 @@
 # Práctica 1 — Mini Cloud Log Analyzer
 ## Variante C: Detección del primer evento crítico (503)
 
+## Esteves Peña Samuel Num.Control: 22210762
 ---
 
 ## Descripción
