@@ -1,0 +1,217 @@
+// ============================================================
+// analyzer.s — Mini Cloud Log Analyzer  (Variante C)
+// Detecta el PRIMER evento crítico 503 en la entrada estándar.
+//
+// Entrada : códigos de estado HTTP (uno por línea) en stdin
+// Salida  : mensaje indicando la línea del primer 503,
+//           o mensaje de "no encontrado" si no existe ninguno.
+//
+// Syscalls Linux AArch64 usadas:
+//   read  → NR 63
+//   write → NR 64
+//   exit  → NR 93
+//
+// Convención de registros dentro de cada bloque:
+//   x19 — número de línea actual (contador)
+//   x20 — valor numérico acumulado del código parseado
+//   x21 — flag: 503 encontrado (0 = no, 1 = sí)
+//   x22 — carácter leído en cada iteración
+// ============================================================
+
+    .section .data
+
+msg_found:
+    .ascii  "Primer evento critico 503 encontrado en la linea "
+msg_found_len = . - msg_found
+
+msg_newline:
+    .ascii  "\n"
+
+msg_not_found:
+    .ascii  "No se encontro ningun evento critico 503\n"
+msg_not_found_len = . - msg_not_found
+
+    .section .bss
+
+buf:        .skip 1          // buffer de 1 byte para read()
+num_buf:    .skip 20         // buffer para convertir número → ASCII
+
+    .section .text
+    .global _start
+
+// ============================================================
+// _start — punto de entrada
+// ============================================================
+_start:
+    // ── Inicializar contadores ──────────────────────────────
+    mov     x19, #1          // línea actual (empieza en 1)
+    mov     x20, #0          // acumulador de dígitos del código
+    mov     x21, #0          // flag "503 encontrado"
+
+read_loop:
+    // ── syscall read(0, &buf, 1) ────────────────────────────
+    mov     x0,  #0          // fd = stdin
+    adr     x1,  buf         // buffer
+    mov     x2,  #1          // nbytes = 1
+    mov     x8,  #63         // NR_read
+    svc     #0
+
+    // Si read devuelve ≤ 0 → EOF o error → procesar fin
+    cmp     x0,  #0
+    ble     handle_eof
+
+    // ── Cargar el byte leído ────────────────────────────────
+    adr     x22, buf
+    ldrb    w22, [x22]       // w22 = carácter (8 bits)
+
+    // ── ¿Es salto de línea? ─────────────────────────────────
+    cmp     w22, #10         // '\n' == 10
+    beq     end_of_line
+
+    // ── ¿Es dígito? (0x30 – 0x39) ───────────────────────────
+    cmp     w22, #48         // '0'
+    blt     read_loop        // ignorar caracteres no-dígito anteriores al código
+    cmp     w22, #57         // '9'
+    bgt     read_loop
+
+    // ── Acumular dígito: acc = acc * 10 + (c - '0') ─────────
+    mov     x0,  x20
+    mov     x1,  #10
+    mul     x20, x0, x1      // acc = acc * 10
+    sub     w22, w22, #48    // dígito = c - '0'
+    add     x20, x20, x22    // acc += dígito
+
+    b       read_loop
+
+// ── Fin de línea: evaluar el código acumulado ───────────────
+end_of_line:
+    // ¿Es exactamente 503?
+    mov     x0,  #503
+    cmp     x20, x0
+    bne     next_line        // no es 503 → siguiente línea
+
+    // ── 503 encontrado ──────────────────────────────────────
+    mov     x21, #1          // marcar flag
+
+    // Imprimir "Primer evento critico 503 encontrado en la linea "
+    mov     x0,  #1
+    adr     x1,  msg_found
+    mov     x2,  #49         // longitud de msg_found_len
+    mov     x8,  #64
+    svc     #0
+
+    // Convertir x19 (número de línea) a cadena ASCII
+    mov     x0,  x19
+    bl      int_to_str       // devuelve: x0=puntero inicio, x1=longitud
+
+    // Imprimir número de línea
+    mov     x2,  x1
+    mov     x1,  x0
+    mov     x0,  #1
+    mov     x8,  #64
+    svc     #0
+
+    // Imprimir '\n'
+    mov     x0,  #1
+    adr     x1,  msg_newline
+    mov     x2,  #1
+    mov     x8,  #64
+    svc     #0
+
+    // Terminar con éxito
+    mov     x0,  #0
+    mov     x8,  #93
+    svc     #0
+
+next_line:
+    add     x19, x19, #1    // línea++
+    mov     x20, #0         // resetear acumulador
+    b       read_loop
+
+// ── EOF sin haber encontrado 503 ────────────────────────────
+handle_eof:
+    // Verificar si quedó un código sin '\n' final
+    cbz     x20, print_not_found   // acumulador vacío → no hay código pendiente
+
+    // Evaluar último código (archivo sin '\n' al final)
+    mov     x0,  #503
+    cmp     x20, x0
+    bne     print_not_found
+
+    // Es 503 en la última línea
+    mov     x21, #1
+
+    mov     x0,  #1
+    adr     x1,  msg_found
+    mov     x2,  #49
+    mov     x8,  #64
+    svc     #0
+
+    mov     x0,  x19
+    bl      int_to_str
+    mov     x2,  x1
+    mov     x1,  x0
+    mov     x0,  #1
+    mov     x8,  #64
+    svc     #0
+
+    mov     x0,  #1
+    adr     x1,  msg_newline
+    mov     x2,  #1
+    mov     x8,  #64
+    svc     #0
+
+    mov     x0,  #0
+    mov     x8,  #93
+    svc     #0
+
+print_not_found:
+    mov     x0,  #1
+    adr     x1,  msg_not_found
+    mov     x2,  #41         // msg_not_found_len
+    mov     x8,  #64
+    svc     #0
+
+    mov     x0,  #1          // exit code 1 = no encontrado
+    mov     x8,  #93
+    svc     #0
+
+
+// ============================================================
+// int_to_str — convierte entero sin signo en x0 a ASCII
+// Entrada : x0 = número
+// Salida  : x0 = puntero al inicio de la cadena en num_buf
+//           x1 = longitud en bytes
+// Modifica: x2, x3, x4 (temporales)
+// ============================================================
+int_to_str:
+    adr     x2, num_buf      // base del buffer
+    add     x3, x2, #19      // puntero al final (escribimos al revés)
+    mov     x4, #0
+    strb    w4, [x3]         // terminador nulo (por seguridad)
+
+    // Caso especial: número = 0
+    cbnz    x0, its_loop
+    sub     x3, x3, #1
+    mov     w4, #48          // '0'
+    strb    w4, [x3]
+    b       its_done
+
+its_loop:
+    cbz     x0, its_done
+    // dígito = x0 % 10
+    mov     x1, #10
+    udiv    x4, x0, x1       // x4 = x0 / 10
+    msub    x1, x4, x1, x0   // x1 = x0 - x4*10  (= x0 % 10)
+    add     x1, x1, #48      // + '0'
+    sub     x3, x3, #1
+    strb    w1, [x3]
+    mov     x0, x4
+    b       its_loop
+
+its_done:
+    mov     x0, x3           // puntero inicio
+    adr     x1, num_buf
+    add     x1, x1, #19
+    sub     x1, x1, x3       // longitud = fin - inicio
+    ret
