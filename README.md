@@ -119,7 +119,11 @@ Primer evento critico 503 encontrado en la linea 7
 ```
 
 ---
+## Evidencia de ejecución
 
+[![asciicast](https://asciinema.org/a/i-0183d5e11914.svg)](https://asciinema.org/a/i-0183d5e11914)
+
+---
 ## Restricciones cumplidas
 
 - ✅ Lógica implementada **100% en ARM64 Assembly**
